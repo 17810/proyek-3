@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Space Laser Shooter — single file</title>
+<style>
+  :root{
+    --bg:#04060b;
+    --fg:#cdd6f4;
+    --accent:#7aa2f7;
+    --danger:#f7768e;
+    --good:#a6e3a1;
+    --panel:rgba(255,255,255,.06);
+    --panel2:rgba(255,255,255,.12);
+  }
+  html,body{height:100%;}
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:radial-gradient(1200px 800px at 60% 40%, #0b1020 0%, var(--bg) 60%);
+    color:var(--fg); font:600 14px/1.3 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial;
+    overflow:hidden;
+  }
+  #game{position:fixed; inset:0;}
+  .ui{position:fixed; inset:0; pointer-events:none;}
+  .topbar{position:absolute; top:12px; left:12px; right:12px; display:flex; gap:10px; align-items:center; justify-content:space-between;}
+  .chip{backdrop-filter: blur(6px); background:var(--panel); border:1px solid var(--panel2); padding:8px 12px; border-radius:999px; pointer-events:auto}
+  .row{display:flex; gap:10px; align-items:center}
+  .btn{cursor:pointer; user-select:none}
+  .btn:hover{background:var(--panel2)}
+  .meter{--val:1; width:220px; height:10px; border-radius:999px; background:linear-gradient(90deg, var(--good), #f9e2af, var(--danger)); position:relative;}
+  .meter::after{content:""; position:absolute; inset:0; border-radius:inherit; background:#0009; transform-origin:left center; transform:scaleX(calc(1 - (1 - var(--val))));}
+  .panel{position:absolute; right:12px; top:52px; width:320px; max-width:calc(100% - 24px); padding:12px 14px; border-radius:14px; background:var(--panel); border:1px solid var(--panel2); backdrop-filter:blur(8px); pointer-events:auto}
+  .panel h3{margin:0 0 6px; font-size:16px}
+  .panel p{margin:6px 0; opacity:.9}
+  .kbd{display:inline-block; min-width:1.6em; text-align:center; padding:.1em .4em; border-radius:6px; background:#ffffff10; border:1px solid #ffffff24}
+  .foot{position:absolute; left:12px; bottom:12px; opacity:.75}
+  .toast{position:absolute; inset-inline:0; top:60px; margin:auto; width:max-content; max-width:min(92vw,600px); background:var(--panel); border:1px solid var(--panel2); backdrop-filter:blur(8px); padding:10px 14px; border-radius:999px; text-align:center}
+  a{color:var(--accent); text-decoration:none}
+  input[type="color"]{appearance:none;border:none;width:28px;height:20px;border-radius:6px;overflow:hidden;background:#ffffff20; box-shadow:inset 0 0 0 1px #ffffff30; cursor:pointer}
+  input[type="color"]::-webkit-color-swatch{border:none; border-radius:6px}
+  input[type="color"]::-moz-color-swatch{border:none; border-radius:6px}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div class="ui" id="ui">
+  <div class="topbar">
+    <div class="row">
+      <div class="chip">Score: <span id="score">0</span></div>
+      <div class="chip">High: <span id="hiscore">0</span></div>
+      <div class="chip" title="Kesehatan / Shield">
+        HP
+        <div class="meter" id="hp" style="--val:1"></div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="chip" title="Warna laser (gradien)">
+        Laser <input type="color" id="laserA" value="#9ccaff" style="margin-left:8px"> → <input type="color" id="laserB" value="#2dd4ff" style="margin-left:6px">
+      </div>
+      <div class="chip btn" id="btnPause">⏸️ Pause</div>
+      <div class="chip btn" id="btnRestart">🔁 Restart</div>
+    </div>
+  </div>
+
+  <div class="panel" id="help">
+    <h3>🚀 Space Laser Shooter</h3>
+    <p>Gerakin kapal pake <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span> / panah. Arahkan mouse buat aim. Tembak pake <span class="kbd">Click</span> / <span class="kbd">Space</span>. <span class="kbd">P</span> untuk pause.</p>
+    <p><strong>Tip:</strong> Ambil power-up <b>⚡ Rapid</b> & <b>🛡️ Shield</b>. Laser bisa ganti warna di kanan atas.</p>
+    <p style="opacity:.75">Mobile: tap & tahan buat nembak ke arah jari, geser layar untuk ngarahin.</p>
+  </div>
+
+  <div class="foot">Made with ❤️ — single file. <span style="opacity:.65">v1.2</span></div>
+  <div class="toast" id="toast" style="display:none"></div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const ui = {
+    score: document.getElementById('score'),
+    hiscore: document.getElementById('hiscore'),
+    hp: document.getElementById('hp'),
+    toast: document.getElementById('toast'),
+    pauseBtn: document.getElementById('btnPause'),
+    restartBtn: document.getElementById('btnRestart'),
+    help: document.getElementById('help'),
+    laserA: document.getElementById('laserA'),
+    laserB: document.getElementById('laserB'),
+  };
+  const DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  let W=0, H=0; resize();
+  window.addEventListener('resize', resize);
+  function resize(){
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = W*DPR; canvas.height = H*DPR; canvas.style.width=W+'px'; canvas.style.height=H+'px';
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+
+  // ===== Util =====
+  const rand = (a,b)=>a+Math.random()*(b-a);
+  const clamp=(v,mi,ma)=>Math.max(mi,Math.min(ma,v));
+  const dist=(x1,y1,x2,y2)=>Math.hypot(x2-x1,y2-y1);
+
+  function circleHit(a,b){
+    return dist(a.x,a.y,b.x,b.y) < (a.r + b.r);
+  }
+
+  // Screen shake
+  let shakeT=0, shakeMag=0;
+  function shake(str=6,time=180){shakeMag=Math.max(shakeMag,str); shakeT=Math.max(shakeT,time)}
+
+  // ===== Input =====
+  const keys={};
+  window.addEventListener('keydown',e=>{ keys[e.key.toLowerCase()]=true; if(e.key===' ') e.preventDefault(); });
+  window.addEventListener('keyup',e=>{ keys[e.key.toLowerCase()]=false; });
+  let mouse = {x: W/2, y: H/2, down:false, seen:false};
+  canvas.addEventListener('pointerdown', e=>{ mouse.down=true; mouse.seen=true; setMouse(e); });
+  window.addEventListener('pointerup', ()=> mouse.down=false );
+  window.addEventListener('pointermove', e=> setMouse(e));
+  function setMouse(e){ const rect=canvas.getBoundingClientRect(); mouse.x = (e.clientX-rect.left); mouse.y=(e.clientY-rect.top); }
+  // Touch fallback (simple): tap to fire, drag to aim
+  canvas.addEventListener('touchstart', e=>{ mouse.down=true; mouse.seen=true; const t=e.touches[0]; if(t) setMouse(t);}, {passive:false});
+  canvas.addEventListener('touchmove', e=>{ const t=e.touches[0]; if(t) setMouse(t);}, {passive:false});
+  canvas.addEventListener('touchend', ()=>{ mouse.down=false; }, {passive:false});
+
+  // ===== Audio (tiny beeps) =====
+  const AudioCtx = window.AudioContext||window.webkitAudioContext;
+  let actx=null, muted=false;
+  function ensureAudio(){ if(!actx) actx = new AudioCtx(); }
+  function beep(type='square', f=440, t=0.06, g=0.08){
+    if(muted) return; ensureAudio(); const o=actx.createOscillator(); const gain=actx.createGain();
+    o.type=type; o.frequency.value=f; gain.gain.value=g; o.connect(gain).connect(actx.destination); o.start(); o.stop(actx.currentTime+t);
+  }
+
+  // ===== Game State =====
+  let running=true, gameOver=false, time=0, score=0, hiscore=Number(localStorage.getItem('space_hiscore')||0);
+  ui.hiscore.textContent = hiscore;
+
+  class Star{ constructor(){ this.reset(true);} reset(init){ this.z = init? rand(0.1,1):1; this.x=rand(0,W); this.y= init? rand(0,H): -2; this.s=rand(0.5,2.2); this.alpha=rand(0.4,1); }
+    update(dt){ this.y += (40+120*(1-this.z))*dt; if(this.y>H+2) this.reset(); }
+    draw(){ ctx.globalAlpha=this.alpha; ctx.fillStyle='#ffffff'; ctx.fillRect(this.x, this.y, this.s, this.s); ctx.globalAlpha=1; }
+  }
+  const stars = Array.from({length:220},()=>new Star());
+
+  class Particle{ constructor(x,y,ang,speed,life,col){ this.x=x; this.y=y; this.vx=Math.cos(ang)*speed; this.vy=Math.sin(ang)*speed; this.life=life; this.t=life; this.col=col; this.r=rand(1,2.2);} update(dt){ this.t-=dt; this.x+=this.vx*dt; this.y+=this.vy*dt; }
+    draw(){ const a=clamp(this.t/this.life,0,1); ctx.globalAlpha=a; ctx.fillStyle=this.col; ctx.beginPath(); ctx.arc(this.x,this.y,this.r,0,Math.PI*2); ctx.fill(); ctx.globalAlpha=1; }
+  }
+  const particles=[];
+
+  // Laser gradient colors (customizable)
+  let laserA = ui.laserA.value;
+  let laserB = ui.laserB.value;
+  ui.laserA.addEventListener('input', ()=>{ laserA = ui.laserA.value; flashToast('🎨 Laser color updated'); });
+  ui.laserB.addEventListener('input', ()=>{ laserB = ui.laserB.value; flashToast('🎨 Laser color updated'); });
+
+  class Laser{ constructor(x,y,ang,speed=900){ this.x=x; this.y=y; this.vx=Math.cos(ang)*speed; this.vy=Math.sin(ang)*speed; this.r=3; this.life=1.4; this.alive=true; }
+    update(dt){ this.life-=dt; this.x+=this.vx*dt; this.y+=this.vy*dt; if(this.life<=0) this.alive=false; }
+    draw(){ const len = 14; const nx = this.vx/900, ny=this.vy/900;
+      ctx.save(); ctx.globalCompositeOperation='lighter';
+      const grad = ctx.createLinearGradient(this.x, this.y, this.x - nx*len, this.y - ny*len);
+      grad.addColorStop(0, laserA); grad.addColorStop(1, laserB);
+      ctx.strokeStyle=grad; ctx.lineWidth=3; ctx.beginPath();
+      ctx.moveTo(this.x, this.y);
+      ctx.lineTo(this.x - nx*len, this.y - ny*len);
+      ctx.stroke();
+      // subtle glow
+      ctx.fillStyle=laserA + '80';
+      ctx.beginPath(); ctx.ellipse(this.x - nx*3, this.y - ny*3, 2.2, 2.2, 0, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  class Player{
+    constructor(){ this.x=W/2; this.y=H*0.75; this.r=16; this.speed=320; this.hp=1; this.cool=0; this.coolRate=0.18; this.combo=0; this.inv=0; this.aimX=W/2; this.aimY=H/2-80; }
+    update(dt){
+      const ax = (keys['a']||keys['arrowleft']?-1:0) + (keys['d']||keys['arrowright']?1:0);
+      const ay = (keys['w']||keys['arrowup']?-1:0) + (keys['s']||keys['arrowdown']?1:0);
+      const sp = this.speed * (keys['shift']?1.35:1);
+      this.x += ax*sp*dt; this.y += ay*sp*dt;
+      this.x = clamp(this.x, this.r+6, W-this.r-6); this.y = clamp(this.y, this.r+6, H-this.r-6);
+      this.cool = Math.max(0, this.cool - dt);
+      this.inv = Math.max(0, this.inv - dt);
+      this.aimX = mouse.seen? mouse.x : this.x; this.aimY = mouse.seen? mouse.y : this.y-80;
+      if((mouse.down || keys[' ']) && this.cool<=0){ this.shoot(); }
+    }
+    shoot(){
+      const ang = Math.atan2(this.aimY - this.y, this.aimX - this.x);
+      lasers.push(new Laser(this.x + Math.cos(ang)*this.r, this.y + Math.sin(ang)*this.r, ang));
+      this.cool = this.coolRate; // lowered by powerup
+      for(let i=0;i<6;i++){
+        particles.push(new Particle(this.x, this.y, ang + rand(-0.6,0.6), rand(60,160), rand(0.15,0.28), '#93c5fd'));
+      }
+      beep('square', 700+Math.min(this.combo*40,240), 0.04, 0.06);
+    }
+    hurt(){ if(this.inv>0) return; this.hp = Math.max(0, this.hp - 0.14); this.inv=0.9; shake(8,240); beep('sawtooth', 160, 0.12, 0.15); this.combo=0; flashToast('⚠️ Kapal kena hit!'); }
+    heal(v){ this.hp = clamp(this.hp + v, 0, 1); flashToast('🛡️ Shield +'+Math.round(v*100)); }
+    boost(rate, dur=6){ this.coolRate = Math.max(0.08, this.coolRate - rate); setTimeout(()=>{ this.coolRate = 0.18; }, dur*1000); flashToast('⚡ Rapid Fire!'); }
+    draw(){
+      const ang = Math.atan2(this.aimY - this.y, this.aimX - this.x);
+      ctx.save();
+      if(this.inv>0 && Math.floor(time*30)%2===0){ ctx.globalAlpha=0.5; }
+      ctx.translate(this.x, this.y); ctx.rotate(ang);
+      const grd = ctx.createLinearGradient(-18,0, 22,0);
+      grd.addColorStop(0,'#60a5fa'); grd.addColorStop(1,'#e0f2fe');
+      ctx.fillStyle=grd; ctx.beginPath();
+      ctx.moveTo(20,0); ctx.lineTo(-10,-12); ctx.lineTo(-6,0); ctx.lineTo(-10,12); ctx.closePath(); ctx.fill();
+      ctx.fillStyle='#1e293b'; ctx.beginPath(); ctx.arc(4,0,5,0,Math.PI*2); ctx.fill();
+      const puls = 1 + Math.sin(time*12)*0.25;
+      ctx.fillStyle='rgba(56,189,248,0.8)'; ctx.beginPath(); ctx.ellipse(-12,0, 4*puls, 2*puls, 0, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  class Enemy{ constructor(){ this.r=rand(12,22); this.x=rand(this.r+8, W-this.r-8); this.y=-this.r-10; this.vx=rand(-40,40); this.vy=rand(70,140); this.hp=Math.ceil(this.r/10); this.spin=rand(-2,2); this.a=rand(0,Math.PI*2); this.type=Math.random()<0.15? 'fast': (Math.random()<0.15? 'tank':'norm'); if(this.type==='fast'){ this.vy*=1.35; this.r*=0.85; } if(this.type==='tank'){ this.hp+=1; this.r*=1.2; }
+    }
+    update(dt){ this.x+=this.vx*dt; this.y+=this.vy*dt; this.a+=this.spin*dt; if(this.x<this.r||this.x>W-this.r) this.vx*=-1; }
+    draw(){ ctx.save(); ctx.translate(this.x,this.y); ctx.rotate(this.a); let col = this.type==='tank'? '#fca5a5' : (this.type==='fast'? '#86efac' : '#c7d2fe');
+      ctx.fillStyle=col; ctx.beginPath();
+      for(let i=0;i<6;i++){ const ang=i*(Math.PI*2/6); const rr=this.r* (0.8 + Math.sin(i*1.7+time*1.2)*0.12); const px=Math.cos(ang)*rr, py=Math.sin(ang)*rr; i? ctx.lineTo(px,py): ctx.moveTo(px,py); }
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle='#0f172a'; ctx.beginPath(); ctx.arc(this.r*0.25,0, this.r*0.25, 0,Math.PI*2); ctx.fill();
+      ctx.restore(); }
+  }
+
+  class Power{ constructor(kind,x,y){ this.kind=kind; this.x=x; this.y=y; this.vy=80; this.r=12; this.t=10; }
+    update(dt){ this.t-=dt; this.y+=this.vy*dt; }
+    draw(){ ctx.save(); ctx.translate(this.x,this.y); ctx.fillStyle= this.kind==='heal'? '#a7f3d0' : '#fde68a'; ctx.beginPath(); ctx.arc(0,0,this.r,0,Math.PI*2); ctx.fill(); ctx.fillStyle='#0f172a'; ctx.font='bold 14px ui-sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(this.kind==='heal'?'🛡️':'⚡',0,1); ctx.restore(); }
+  }
+
+  const player = new Player();
+  const lasers=[]; const enemies=[]; const powers=[];
+
+  // Spawn control (biar musuh ga kebanyakan)
+  let spawnT=0, level=1, nextLevel=150; // score thresholds
+  const MAX_ENEMIES_BASE = 6; // batas musuh aktif dasar
+
+  function flashToast(msg){ ui.toast.textContent=msg; ui.toast.style.display='block'; ui.toast.style.opacity='1'; clearTimeout(flashToast.timer); flashToast.timer=setTimeout(()=>{ ui.toast.style.transition='opacity .5s'; ui.toast.style.opacity='0'; setTimeout(()=>{ ui.toast.style.display='none'; ui.toast.style.transition=''; },520); }, 950); }
+
+  // Pause / Restart controls
+  ui.pauseBtn.onclick=()=>{ running=!running; ui.pauseBtn.textContent = running? '⏸️ Pause':'▶️ Resume'; };
+  ui.restartBtn.onclick=()=> restart();
+  window.addEventListener('keydown', e=>{ if(e.key.toLowerCase()==='p'){ running=!running; ui.pauseBtn.textContent = running? '⏸️ Pause':'▶️ Resume'; } });
+
+  function restart(){
+    enemies.length=0; lasers.length=0; particles.length=0; powers.length=0;
+    player.x=W/2; player.y=H*0.75; player.hp=1; player.inv=0; player.cool=0; player.combo=0; player.coolRate=0.18;
+    score=0; level=1; nextLevel=150; gameOver=false; running=true; ui.pauseBtn.textContent='⏸️ Pause';
+    ui.hp.style.setProperty('--val', player.hp.toFixed(3)); ui.score.textContent=score;
+    flashToast('🎮 New Run! Good luck.');
+  }
+
+  // ===== Main Loop =====
+  let last=performance.now();
+  function loop(now){
+    const dt = Math.min(0.033, (now-last)/1000); last=now; time+=dt; if(!running){ draw(dt,true); return requestAnimationFrame(loop);} 
+    if(!gameOver){ update(dt); }
+    draw(dt,false);
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  function update(dt){
+    // spawn enemies progressively but with cap
+    spawnT -= dt;
+    const spd = 0.9 + level*0.10; // lebih santai
+    if(spawnT<=0){
+      if(enemies.length < (MAX_ENEMIES_BASE + Math.floor(level*0.5))) {
+        enemies.push(new Enemy());
+      }
+      spawnT = rand(0.5/spd, 1.1/spd);
+    }
+
+    // update systems
+    player.update(dt);
+    stars.forEach(s=>s.update(dt));
+    lasers.forEach(l=>l.update(dt));
+    enemies.forEach(e=>e.update(dt));
+    particles.forEach(p=>p.update(dt));
+    powers.forEach(p=>p.update(dt));
+
+    // collisions lasers->enemies
+    for(let i=enemies.length-1;i>=0;i--){ const e=enemies[i];
+      for(let j=lasers.length-1;j>=0;j--){ const l=lasers[j]; if(!l.alive) continue; if(circleHit(e,{x:l.x,y:l.y,r:l.r})){
+          l.alive=false; e.hp-=1; 
+          for(let k=0;k<8;k++) particles.push(new Particle(l.x,l.y, rand(0,Math.PI*2), rand(80,220), rand(0.2,0.5), '#e5e7eb'));
+          if(e.hp<=0){
+            for(let k=0;k<20;k++) particles.push(new Particle(e.x,e.y, rand(0,Math.PI*2), rand(60,220), rand(0.35,0.7), '#93c5fd'));
+            enemies.splice(i,1); shake(5,160); beep('triangle', 280+Math.random()*120, 0.05, 0.08);
+            const add = 10 + Math.floor(e.r);
+            score += add; player.combo = Math.min(player.combo+1, 20); score += player.combo; // combo bonus
+            ui.score.textContent = score;
+            if(Math.random()<0.08) powers.push(new Power(Math.random()<0.5? 'heal':'rapid', e.x, e.y));
+            break;
+          }
+        }
+      }
+    }
+
+    // clean lasers/particles
+    for(let i=lasers.length-1;i>=0;i--) if(!lasers[i].alive || lasers[i].x<-30||lasers[i].x>W+30||lasers[i].y<-30||lasers[i].y>H+30) lasers.splice(i,1);
+    for(let i=particles.length-1;i>=0;i--) if(particles[i].t<=0) particles.splice(i,1);
+
+    // enemies hit player or escape
+    for(let i=enemies.length-1;i>=0;i--){ const e=enemies[i];
+      if(e.y>H+e.r){ enemies.splice(i,1); player.hurt(); continue; }
+      if(circleHit(player,e)){ enemies.splice(i,1); player.hurt(); }
+    }
+
+    // powerups
+    for(let i=powers.length-1;i>=0;i--){ const p=powers[i]; if(p.t<=0||p.y>H+30){ powers.splice(i,1); continue; }
+      if(circleHit(player,p)){ if(p.kind==='heal') player.heal(0.25); else player.boost(0.08, 6); powers.splice(i,1); }
+    }
+
+    // level up
+    if(score>=nextLevel){ level++; nextLevel = Math.floor(nextLevel*1.65); flashToast('⬆️ Level '+level); }
+
+    // hp meter
+    ui.hp.style.setProperty('--val', player.hp.toFixed(3));
+
+    // game over
+    if(player.hp<=0 && !gameOver){ gameOver=true; running=false; ui.pauseBtn.textContent='▶️ Resume';
+      hiscore = Math.max(hiscore, score); localStorage.setItem('space_hiscore', String(hiscore)); ui.hiscore.textContent=hiscore;
+      setTimeout(()=>{ showGameOver(); }, 10);
+    }
+  }
+
+  function draw(dt, paused){
+    let ox=0, oy=0; if(shakeT>0){ shakeT -= dt*1000; const s = (shakeT/180)*shakeMag; ox = rand(-s,s); oy = rand(-s,s);} else { shakeMag=0; }
+
+    ctx.clearRect(0,0,W,H);
+    ctx.save(); ctx.translate(ox,oy);
+
+    stars.forEach(s=>s.draw());
+    enemies.forEach(e=>e.draw());
+    particles.forEach(p=>p.draw());
+    lasers.forEach(l=>l.draw());
+    player.draw();
+
+    ctx.restore();
+
+    if(paused && !gameOver){ ctx.save(); ctx.fillStyle='rgba(0,0,0,.35)'; ctx.fillRect(0,0,W,H); ctx.fillStyle='#e5e7eb'; ctx.font='700 28px ui-sans-serif'; ctx.textAlign='center'; ctx.fillText('PAUSED', W/2, H/2 - 12); ctx.font='14px ui-sans-serif'; ctx.fillText('Tekan P atau klik Resume', W/2, H/2 + 12); ctx.restore(); }
+  }
+
+  function showGameOver(){
+    const overlay = document.createElement('div');
+    overlay.style.position='fixed'; overlay.style.inset='0'; overlay.style.backdropFilter='blur(6px)'; overlay.style.background='rgba(0,0,0,.45)'; overlay.style.display='grid'; overlay.style.placeItems='center'; overlay.style.zIndex='10';
+    const card = document.createElement('div'); card.style.background='var(--panel)'; card.style.border='1px solid var(--panel2)'; card.style.borderRadius='16px'; card.style.padding='20px 22px'; card.style.width='min(92vw,460px)';
+    card.innerHTML = `
+      <h2 style="margin:0 0 6px">💥 Game Over</h2>
+      <p style="margin:0 0 12px; opacity:.9">Skor kamu: <b>${score}</b> • High score: <b>${hiscore}</b></p>
+      <div style="display:flex; gap:10px;flex-wrap:wrap">
+        <button id="again" class="chip btn">🔁 Main lagi</button>
+        <button id="mute" class="chip btn">${muted? '🔊 Unmute':'🔇 Mute'}</button>
+        <button id="how" class="chip btn">❔ Cara main</button>
+      </div>
+    `;
+    overlay.appendChild(card); document.body.appendChild(overlay);
+    card.querySelector('#again').onclick=()=>{ document.body.removeChild(overlay); restart(); };
+    card.querySelector('#mute').onclick=()=>{ muted=!muted; card.querySelector('#mute').textContent = muted? '🔊 Unmute':'🔇 Mute'; };
+    card.querySelector('#how').onclick=()=>{ ui.help.scrollIntoView({behavior:'smooth', block:'center'}); };
+  }
+
+})();
+</script>
+</body>
+</html>
